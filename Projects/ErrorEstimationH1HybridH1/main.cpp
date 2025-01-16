@@ -48,7 +48,7 @@
 #include <iostream>
 // Global variables
 const int problemDimension = 2;
-const bool readGMeshFromFile = false;
+const bool readGMeshFromFile = true;
 
 const int matID = 1;
 
@@ -97,7 +97,12 @@ int main(int argc, char *argv[]) {
 #ifdef PZ_LOG
     TPZLogger::InitializePZLOG();
 #endif
-    
+    {
+        TPZFNMatrix<8,REAL> a(2,2,0.),b(2,1,1);
+        a(0,0) = 1.;
+        a(1,1) = 1.;
+        a.SolveDirect(b,ELU);
+    }
     // Initializing uniform refinements for reference elements
     gRefDBase.InitializeUniformRefPattern(EOned);
     gRefDBase.InitializeUniformRefPattern(EQuadrilateral);
@@ -105,7 +110,7 @@ int main(int argc, char *argv[]) {
     
     for(int ndiv = 0; ndiv < 1; ndiv++){
         
-        std::string meshfilename = "../Quad.msh";
+        std::string meshfilename = "Quad.msh";
         
         TPZGeoMesh *gmesh = nullptr;
         
@@ -1197,7 +1202,7 @@ void PostProcessing(TPZCompMesh * pressuremesh, TPZMultiphysicsCompMesh *mphysic
         vtk.Do();
     }
 
-    return true;
+    return;
 }
 
 TPZGeoMesh *CreateGeoCircleMesh() {
@@ -1633,7 +1638,7 @@ void ComputeErrors(TPZCompMesh *cmeshH1, TPZMultiphysicsCompMesh *mphys, TPZFMat
         auto intrule = gel->CreateSideIntegrationRule(gel->NSides()-1, 20);
         int npoints = intrule->NPoints();
         TPZFNMatrix<6> jac(2, 2),jacinv(2,2),gradx(3,2),axes(2,3);
-        TPZManVector<REAL,3> dsolH1(3,0.),dsolmphys(3,0.);
+        TPZManVector<REAL,3> dsolH1(2,0.),dsolmphys(3,0.);
         REAL detjac, weight;
         TPZManVector<REAL,2> point(2);
         REAL elerror = 0.;
