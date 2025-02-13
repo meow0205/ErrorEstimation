@@ -239,7 +239,7 @@ REAL shift_distance = 1.e-2;
 TPZSBFemElementGroup *sbfem_groupH1 = 0;
 TPZSBFemElementGroup *sbfem_groupHdiv = 0;
 enum MMeshStyle {ETraditional, ECollapsed, EQuarterPoint, ESBFem};
-MMeshStyle meshstyle = ESBFem;
+MMeshStyle meshstyle = ETraditional;
 int defaultporder = 1;
 int SBFemOrder = 3;
 std::set<int64_t> sbfem_elements;
@@ -290,7 +290,7 @@ int main() {
     REAL angle = 0.0;
     TPZNacaProfile naca(length, 12, angle, x0);
 
-    TPZGeoMesh *gmesh = ReadGmsh("naca.msh", naca);
+    TPZGeoMesh *gmesh = ReadGmsh("naca-circle.msh", naca);
     {
         std::ofstream out("gmesh.txt");
         gmesh->Print(out);
@@ -316,11 +316,11 @@ int main() {
         refpattern[6] = manual;
     }
     TPZCheckGeom check(gmesh);
-    int uniform = 3;
+    int uniform = 1;
     if (uniform)
     {
         check.UniformRefine(uniform);
-        if(0)
+        if(1)
         {
             std::ofstream out4("gmeshfine.txt");
             gmesh->Print(out4);
@@ -686,12 +686,51 @@ void BuildBlueRedElements(TPZGeoMesh *gmesh, std::set<int64_t> &blue, std::set<i
                 int64_t neighindex = neighbour.Element()->Index();
                 if(neighbour.Element()->MaterialId() == volmat)
                 {
+                    int ncorners = neighbour.Element()->NCornerNodes();
                     TPZTransform<REAL> tr(1);
                     gelside.SideTransform3(neighbour, tr);
                     if(tr.Mult()(0,0) > 0.) {
                         blue.insert(neighindex);
+                        // if (ncorners == 3) //for triangles we also need to include the elements that touch the cut elements by the vertices
+                        // {
+                            int neighbourside = neighbour.Side();
+                            for (int side = neighbour.Element()->FirstSide(1); side < neighbour.Element()->NSides() - 1; side++)
+                            {
+                                if (side == neighbourside) continue;
+                                TPZGeoElSide neighbour2(neighbour.Element(), side);
+                                neighbour2 = neighbour2.Neighbour();
+                                if (neighbour2.Element()->MaterialId() == volmat)
+                                {
+                                    int ncorners2 = neighbour2.Element()->NCornerNodes();
+                                    if (ncorners2 == 4) continue;
+                                    int64_t neigh2index = neighbour2.Element()->Index();
+                                    blue.insert(neigh2index);
+                                    nfound++;
+                                }
+                                
+                            }
+                       //  }
                     } else {
                         red.insert(neighindex);
+                        // if (ncorners == 3) //for triangles we also need to include the elements that touch the cut elements by the vertices
+                       //  {
+                            int neighbourside = neighbour.Side();
+                            for (int side = neighbour.Element()->FirstSide(1); side < neighbour.Element()->NSides() - 1; side++)
+                            {
+                                if (side == neighbourside) continue;
+                                TPZGeoElSide neighbour2(neighbour.Element(), side);
+                                neighbour2 = neighbour2.Neighbour();
+                                if (neighbour2.Element()->MaterialId() == volmat)
+                                {
+                                    int ncorners2 = neighbour2.Element()->NCornerNodes();
+                                    if (ncorners2 == 4) continue;
+                                    int64_t neigh2index = neighbour2.Element()->Index();
+                                    red.insert(neigh2index);
+                                    nfound++;
+                                }
+                                
+                            }
+                      //   }
                     }
                     nfound++;
                 }
@@ -825,7 +864,7 @@ TPZCompMesh *CreateH1CompMesh(TPZGeoMesh *gmesh, TPZVec<int> &porders, int64_t &
         for(auto el : blueelements) elcolor[el] = -1;
         for(auto el : redelements) elcolor[el] = 1;
         std::ofstream out("cutcolor.vtk");
-        TPZVTKGeoMesh::PrintGMeshVTK(gmesh, out, elcolor);
+        TPZVTKGeoMesh::PrintGMeshVTK(gmesh, out, elcolor, "CutColor", true);
     }
     for(int64_t el = 0; el<nel; el++) {
         TPZGeoEl *gel = gmesh->Element(el);
@@ -1052,6 +1091,7 @@ TPZCompMesh *CreateHDivCompMesh(TPZGeoMesh *gmesh, TPZVec<int> &porders, int64_t
             int matid = gel->MaterialId();
             if(matid == sbfem_skeleton && meshstyle == ESBFem) {
                 TPZCompEl *cel = gel->Reference();
+                int64_t nrows = cel->NConnects();
                 if(!cel) DebugStop();
                 TPZInterpolatedElement *intel = dynamic_cast<TPZInterpolatedElement *>(cel);
                 if(!intel) DebugStop();
@@ -1243,16 +1283,25 @@ void AdjustHDivEquarterpointintrule(TPZGeoMesh *gmesh)
     // cmesh_m->InsertMaterialObject(bnd3);
 
     // 3. VECTOR OF COMPUTATIONAL MESHES (datavec)
-     TPZManVector<int, 2> active_approx_spaces(2, 1);
-     TPZManVector<TPZCompMesh *, 2> mesh_vec(2);
-     mesh_vec[0] = cmeshHDiv;
-     mesh_vec[1] = cmeshL2;
+    TPZManVector<int, 2> active_approx_spaces(2, 1);
+    TPZManVector<TPZCompMesh *, 2> mesh_vec(2);
+    mesh_vec[0] = cmeshHDiv;
+    mesh_vec[1] = cmeshL2;
 
-     cmesh_m->BuildMultiphysicsSpace(active_approx_spaces, mesh_vec);
+    cmesh_m->BuildMultiphysicsSpace(active_approx_spaces, mesh_vec);
 
-     cmesh_m->ExpandSolution();
-     cmesh_m->LoadReferences();
-     return cmesh_m;
+    TPZFMatrix<REAL> &multiphysicsSol = cmesh_m->Solution();
+    int64_t nrows = multiphysicsSol.Rows();
+    multiphysicsSol.Resize(nrows, 2);
+    for (TPZCompMesh *&mesh : mesh_vec) {
+        TPZFMatrix<REAL> &atomicsol = mesh->Solution();
+        nrows = atomicsol.Rows();
+        atomicsol.Resize(nrows, 2);
+    }
+
+    cmesh_m->ExpandSolution();
+    cmesh_m->LoadReferences();
+    return cmesh_m;
  }
 
  /// @brief Simulate the NACA profile using H1 approximation for Beta = 0
@@ -1490,8 +1539,7 @@ TPZCompMesh *SimulateNacaProfileH1_Minimization(TPZGeoMesh *gmesh, TPZVec<int> &
     //  Solve the system of equations and save the solutions: phi_0 e phi_1 
     an.Solve();
     int64_t numeq = cmesh_m->NEquations();
-    TPZFMatrix<STATE> fsol(numeq,2,0.),u_0(numeq,1,0.),u_1(numeq,1,0.),u(numeq,1,0.);
-    fsol = an.Solution();
+    TPZFMatrix<STATE>& fsol = an.Solution(), u_0(numeq,1,0.),u_1(numeq,1,0.),u(numeq,1,0.);
 
     // fsol.Print("HDiv solution",std::cout);
 
@@ -1499,6 +1547,16 @@ TPZCompMesh *SimulateNacaProfileH1_Minimization(TPZGeoMesh *gmesh, TPZVec<int> &
     {
         u_0(eq) =  fsol(eq,0);
         u_1(eq) =  fsol(eq,1);
+    }
+
+    //Adjusting the number of load cases to 1
+    TPZFMatrix<REAL> &multiphysicsSol = cmesh_m->Solution();
+    int64_t nrows = multiphysicsSol.Rows();
+    multiphysicsSol.Resize(nrows, 1);
+    for (TPZCompMesh *&mesh : cmesh_m->MeshVector()) {
+        TPZFMatrix<REAL> &atomicsol = mesh->Solution();
+        nrows = atomicsol.Rows();
+        atomicsol.Resize(nrows, 1);
     }
 
     //  Compute "Beta(Circulation) = A + B*Circulation" function
@@ -2117,7 +2175,8 @@ void ChangeToBlend(TPZGeoEl *gel) {
 /// @param gel element that will be substituted
 void ChangeToLinearQuad(TPZGeoEl *gel) {
     TPZGeoMesh *gmesh = gel->Mesh();
-    if(gel->Type() != EQuadrilateral) DebugStop();
+    // if(gel->Type() != EQuadrilateral) DebugStop();
+    if (gel->Dimension() != 2) DebugStop();
     TPZManVector<int64_t,4> nodeindices(4);
     for(int i=0; i<4; i++) nodeindices[i] = gel->NodeIndex(i);
     TPZManVector<TPZGeoElSide,9> neighbours(9);
@@ -2651,7 +2710,7 @@ void AdjustSystemofEquations (TPZLinearAnalysis &an, TPZCompMesh *cmesh, int64_t
     TPZSkylMatrix<STATE> *spmat = dynamic_cast<TPZSkylMatrix<STATE>*>(mat.operator->());
     if(!spmat) DebugStop();
 #endif
-    TPZFMatrix<STATE> &rhs = an.Rhs(); 
+    TPZFMatrix<STATE> &rhs = an.Rhs();
 
     ///Variables
     auto nrows =  spmat->Rows();
@@ -3044,6 +3103,16 @@ void ComputeBetaHDiv(TPZGeoMesh *gmesh, TPZMultiphysicsCompMesh *cmesh_m, TPZFMa
 
 {
     AddSBFemVolumeElements();
+
+    TPZFMatrix<REAL> &multiphysicsSol = cmesh_m->Solution();
+    int64_t nrows = multiphysicsSol.Rows();
+    multiphysicsSol.Resize(nrows, 1);
+    for (TPZCompMesh *&mesh : cmesh_m->MeshVector()) {
+        TPZFMatrix<REAL> &atomicsol = mesh->Solution();
+        nrows = atomicsol.Rows();
+        atomicsol.Resize(nrows, 1);
+    }
+
     cmesh_m->LoadSolution(u_0);
     cmesh_m->TransferMultiphysicsSolution();
     TPZManVector<REAL,3> u0_plus(3,0.);
